@@ -230,11 +230,11 @@ final_scored AS (
                 100,
                 GREATEST(
                     0,
-                    0.30 * COALESCE(ongoing_growth_score, 50)
-                  + 0.30 * COALESCE(expected_growth_score, 50)
-                  + 0.25 * COALESCE(underserved_score, 50)
-                  + 0.10 * COALESCE(lender_fragmentation_score, 50)
-                  + 0.05 * COALESCE(lending_momentum_score, 50)
+                    0.35 * COALESCE(ongoing_growth_score, 50)
+                  + 0.35 * COALESCE(expected_growth_score, 50)
+                  + 0.30 * COALESCE(underserved_score, 50)
+                --   + 0.10 * COALESCE(lender_fragmentation_score, 50) # Need to be tested, seems like there might be an inverse relationship
+                --   + 0.05 * COALESCE(lending_momentum_score, 50)
                 )
             ),
             2
