@@ -5,37 +5,43 @@ USE SCHEMA INT;
 CREATE OR REPLACE VIEW INT.INT_QCEW_GROWTH_SCORES AS
 WITH base AS (
     SELECT
-        county_fips,
-        state_fips,
-        qcew_industry_code,
-        sector_code,
-        sector_name,
-        year,
-        quarter,
-        period_id,
+        g.county_fips,
+        g.state_fips,
+        st.state_abbr,
+        st.state_name,
 
-        qtrly_estabs,
-        avg_monthly_employment,
-        total_qtrly_wages,
-        avg_wkly_wage,
+        g.qcew_industry_code,
+        g.sector_code,
+        g.sector_name,
+        g.year,
+        g.quarter,
+        g.period_id,
 
-        oty_qtrly_estabs_pct_chg,
-        oty_total_qtrly_wages_pct_chg,
+        g.qtrly_estabs,
+        g.avg_monthly_employment,
+        g.total_qtrly_wages,
+        g.avg_wkly_wage,
 
-        estabs_prev_qtr,
-        estabs_qoq_pct_chg,
-        employment_prev_qtr,
-        employment_qoq_pct_chg,
-        wages_prev_qtr,
-        wages_qoq_pct_chg,
+        g.oty_qtrly_estabs_pct_chg,
+        g.oty_total_qtrly_wages_pct_chg,
 
-        estabs_4q_avg,
-        employment_4q_avg,
-        wages_4q_avg,
+        g.estabs_prev_qtr,
+        g.estabs_qoq_pct_chg,
+        g.employment_prev_qtr,
+        g.employment_qoq_pct_chg,
+        g.wages_prev_qtr,
+        g.wages_qoq_pct_chg,
 
-        growth_signal_flag
-    FROM INT.INT_QCEW_COUNTY_INDUSTRY_GROWTH_QTR
-    WHERE sector_code IS NOT NULL
+        g.estabs_4q_avg,
+        g.employment_4q_avg,
+        g.wages_4q_avg,
+
+        g.growth_signal_flag
+
+    FROM INT.INT_QCEW_COUNTY_INDUSTRY_GROWTH_QTR g
+    LEFT JOIN REF.US_STATE st
+        ON g.state_fips = st.state_fips
+    WHERE g.sector_code IS NOT NULL
 ),
 
 trend_inputs AS (
@@ -291,6 +297,8 @@ SELECT
 
     county_fips,
     state_fips,
+    state_abbr,
+    state_name,
     qcew_industry_code,
     sector_code,
     sector_name,

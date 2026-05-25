@@ -1,8 +1,9 @@
 USE ROLE ACCOUNTADMIN;
 USE WAREHOUSE COMPUTE_WH;
 USE DATABASE SMB_MARKET_INTELLIGENCE_DEV;
+USE SCHEMA RAW;
 
-CREATE TABLE IF NOT EXISTS RAW.SBA_7A_LOANS_RAW (
+CREATE OR REPLACE TABLE RAW.SBA_7A_LOANS_RAW (
     source_file_name             STRING,
     loaded_at                    TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
 
@@ -29,5 +30,11 @@ CREATE TABLE IF NOT EXISTS RAW.SBA_7A_LOANS_RAW (
 
     jobs_supported               NUMBER,
     project_county               STRING,
-    project_state                STRING
+    project_state                STRING,
+
+    project_county_clean         STRING, -- cleaned to match FIPS-based county dimension
+
+    state_fips                   STRING,
+    county_fips                  STRING,
+    qcew_industry_code           STRING
 );

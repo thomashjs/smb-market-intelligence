@@ -1,24 +1,33 @@
+#!/usr/bin/env python3
 """
-Download BLS QCEW county-industry quarterly CSV slices and prepare a Snowflake-loadable CSV.
+Download BLS QCEW county-industry-quarter data and create one Snowflake-loadable CSV.
 
-This v1 script filters to Texas county-level private-sector records for selected NAICS sectors.
-It intentionally creates one clean CSV for the first vertical slice of the project.
+Default behavior:
+- Pull all U.S. counties, not just Texas
+- Keep private ownership rows: own_code = 5
+- Keep all establishment sizes: size_code = 0
+- Keep county-level 5-digit FIPS rows
+- Exclude statewide pseudo-county rows ending in 000
+- Keep selected NAICS/QCEW sectors
 """
-
-from __future__ import annotations
 
 import argparse
-from io import BytesIO
+import sys
+import urllib.error
+from datetime import datetime, timezone
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 import pandas as pd
 
 
-QCEW_COLUMNS = [
+QCEW_API_TEMPLATE = "https://data.bls.gov/cew/data/api/{year}/{quarter}/industry/{industry_code}.csv"
+
+DEFAULT_SECTORS = "23,52,54,56,62,72"
+
+OUTPUT_COLUMNS = [
     "source_file_name",
     "source_url",
+    "loaded_at",
     "area_fips",
     "own_code",
     "industry_code",
@@ -27,6 +36,11 @@ QCEW_COLUMNS = [
     "year",
     "qtr",
     "disclosure_code",
+    "area_title",
+    "own_title",
+    "industry_title",
+    "agglvl_title",
+    "size_title",
     "qtrly_estabs",
     "month1_emplvl",
     "month2_emplvl",
@@ -64,111 +78,168 @@ QCEW_COLUMNS = [
 ]
 
 
-DEFAULT_SECTORS = [
-    "23",     # Construction
-    "52",     # Finance and Insurance
-    "54",     # Professional, Scientific, and Technical Services
-    "56",     # Administrative and Support Services
-    "62",     # Health Care and Social Assistance
-    "72",     # Accommodation and Food Services
-]
+def qcew_url_industry_code(sector):
+    sector = sector.strip()
+    if sector == "44_45":
+        return "44-45"
+    return sector
 
 
-def qcew_url(year: int, quarter: int, industry_code: str) -> str:
-    return f"https://data.bls.gov/cew/data/api/{year}/{quarter}/industry/{industry_code}.csv"
+def normalized_output_industry_code(value):
+    return str(value).strip().replace("-", "_")
 
 
-def fetch_csv(url: str) -> pd.DataFrame | None:
-    request = Request(url, headers={"User-Agent": "smb-market-intelligence-demo/0.1"})
+def normalize_state_filter(value):
+    value = str(value).strip().lower()
 
-    try:
-        with urlopen(request, timeout=60) as response:
-            content = response.read()
-    except HTTPError as exc:
-        if exc.code == 404:
-            print(f"SKIP 404: {url}")
-            return None
-        raise
-    except URLError as exc:
-        print(f"SKIP network error: {url} ({exc})")
+    if value in {"", "all", "us", "usa", "*"}:
         return None
 
-    df = pd.read_csv(BytesIO(content), dtype=str)
-    df.columns = [col.strip().lower() for col in df.columns]
-    return df
+    states = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        states.append(item.zfill(2))
+
+    return set(states)
 
 
-def clean_qcew_frame(
-    df: pd.DataFrame,
-    source_file_name: str,
-    source_url: str,
-    state_fips: str,
-) -> pd.DataFrame:
-    df = df.copy()
+def is_county_fips(series):
+    area_fips = series.astype("string").str.strip()
+    return area_fips.str.match(r"^\d{5}$", na=False) & ~area_fips.str.endswith("000", na=False)
 
-    df["source_file_name"] = source_file_name
-    df["source_url"] = source_url
 
-    for col in QCEW_COLUMNS:
-        if col not in df.columns:
-            df[col] = pd.NA
-
-    df["area_fips"] = df["area_fips"].astype(str).str.zfill(5)
-
-    # Keep county-level rows for the selected state.
-    # Exclude statewide pseudo-county records like 48000.
-    county_mask = (
-        df["area_fips"].str.fullmatch(r"\d{5}", na=False)
-        & df["area_fips"].str.startswith(state_fips)
-        & ~df["area_fips"].str.endswith("000")
+def download_qcew_slice(year, quarter, sector):
+    industry_for_url = qcew_url_industry_code(sector)
+    url = QCEW_API_TEMPLATE.format(
+        year=year,
+        quarter=quarter,
+        industry_code=industry_for_url,
     )
 
-    # Private ownership and all establishment sizes.
-    business_mask = (df["own_code"] == "5") & (df["size_code"] == "0")
+    try:
+        frame = pd.read_csv(url, dtype="string")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            print(f"Skipping unavailable QCEW slice: {url}")
+            return pd.DataFrame()
+        raise
 
-    df = df.loc[county_mask & business_mask, QCEW_COLUMNS]
-    return df
+    frame["source_file_name"] = f"qcew_{year}_q{quarter}_industry_{industry_for_url}.csv"
+    frame["source_url"] = url
+    frame["loaded_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    return frame
 
 
-def main() -> None:
+def standardize_qcew_slice(frame, state_filter):
+    if frame.empty:
+        return frame
+
+    frame.columns = [col.strip().lower() for col in frame.columns]
+
+    required = {"area_fips", "own_code", "industry_code", "size_code", "year", "qtr"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"QCEW slice missing required columns: {missing}")
+
+    frame["area_fips"] = frame["area_fips"].astype("string").str.strip()
+    frame["own_code"] = frame["own_code"].astype("string").str.strip()
+    frame["size_code"] = frame["size_code"].astype("string").str.strip()
+    frame["industry_code"] = frame["industry_code"].map(normalized_output_industry_code)
+
+    keep_mask = (
+        is_county_fips(frame["area_fips"])
+        & frame["own_code"].eq("5")
+        & frame["size_code"].eq("0")
+    )
+
+    if state_filter is not None:
+        keep_mask = keep_mask & frame["area_fips"].str.slice(0, 2).isin(state_filter)
+
+    frame = frame[keep_mask].copy()
+
+    if frame.empty:
+        return frame
+
+    for col in OUTPUT_COLUMNS:
+        if col not in frame.columns:
+            frame[col] = pd.NA
+
+    return frame[OUTPUT_COLUMNS]
+
+
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--start-year", type=int, default=2023)
     parser.add_argument("--end-year", type=int, default=2025)
-    parser.add_argument("--state-fips", type=str, default="48")
-    parser.add_argument("--output", type=Path, default=Path("data/processed/qcew/qcew_county_industry_qtr_tx_v1.csv"))
-    parser.add_argument("--sectors", nargs="*", default=DEFAULT_SECTORS)
+    parser.add_argument(
+        "--sectors",
+        default=DEFAULT_SECTORS,
+        help="Comma-separated QCEW/NAICS sectors, e.g. 23,52,54,56,62,72 or 23,44_45,52.",
+    )
+    parser.add_argument(
+        "--state-fips",
+        default="all",
+        help="Use 'all' for national data, or comma-separated state FIPS like 06,12,36,48.",
+    )
+    parser.add_argument(
+        "--output",
+        default="data/processed/qcew/qcew_county_industry_qtr_us_v1.csv",
+    )
     args = parser.parse_args()
 
-    frames: list[pd.DataFrame] = []
+    if args.end_year < args.start_year:
+        raise ValueError("--end-year must be greater than or equal to --start-year")
+
+    state_filter = normalize_state_filter(args.state_fips)
+    sectors = [sector.strip() for sector in args.sectors.split(",") if sector.strip()]
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    wrote_header = False
+    total_rows = 0
 
     for year in range(args.start_year, args.end_year + 1):
         for quarter in range(1, 5):
-            for sector in args.sectors:
-                url = qcew_url(year, quarter, sector)
-                print(f"Downloading {url}")
+            for sector in sectors:
+                raw = download_qcew_slice(year, quarter, sector)
+                prepared = standardize_qcew_slice(raw, state_filter)
 
-                raw_df = fetch_csv(url)
-                if raw_df is None:
+                if prepared.empty:
+                    print(f"{year} Q{quarter} sector {sector}: wrote 0 rows")
                     continue
 
-                source_file_name = f"qcew_{year}_q{quarter}_industry_{sector}.csv"
-                clean_df = clean_qcew_frame(raw_df, source_file_name, url, args.state_fips)
+                prepared.to_csv(
+                    output_path,
+                    index=False,
+                    mode="w" if not wrote_header else "a",
+                    header=not wrote_header,
+                )
 
-                if clean_df.empty:
-                    print(f"No matching county rows: {source_file_name}")
-                    continue
+                wrote_header = True
+                total_rows += len(prepared)
 
-                frames.append(clean_df)
+                state_count = prepared["area_fips"].str.slice(0, 2).nunique()
+                county_count = prepared["area_fips"].nunique()
 
-    if not frames:
-        raise RuntimeError("No QCEW records downloaded. Check years, sectors, or network access.")
+                print(
+                    f"{year} Q{quarter} sector {sector}: "
+                    f"wrote {len(prepared):,} rows, "
+                    f"states={state_count:,}, counties={county_count:,}"
+                )
 
-    output_df = pd.concat(frames, ignore_index=True)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    output_df.to_csv(args.output, index=False)
+    if total_rows == 0:
+        raise RuntimeError("No QCEW rows were written. Check years, sectors, or state filter.")
 
-    print(f"Wrote {len(output_df):,} rows to {args.output}")
+    print(f"Wrote {total_rows:,} rows to {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -1,12 +1,13 @@
-USE ROLE ACCOUNTADMIN;
 USE WAREHOUSE COMPUTE_WH;
 USE DATABASE SMB_MARKET_INTELLIGENCE_DEV;
+USE SCHEMA RAW;
 
 TRUNCATE TABLE RAW.QCEW_COUNTY_INDUSTRY_QTR_RAW;
 
 COPY INTO RAW.QCEW_COUNTY_INDUSTRY_QTR_RAW (
     source_file_name,
     source_url,
+    loaded_at,
     area_fips,
     own_code,
     industry_code,
@@ -15,6 +16,11 @@ COPY INTO RAW.QCEW_COUNTY_INDUSTRY_QTR_RAW (
     year,
     qtr,
     disclosure_code,
+    area_title,
+    own_title,
+    industry_title,
+    agglvl_title,
+    size_title,
     qtrly_estabs,
     month1_emplvl,
     month2_emplvl,
@@ -50,7 +56,67 @@ COPY INTO RAW.QCEW_COUNTY_INDUSTRY_QTR_RAW (
     oty_avg_wkly_wage_chg,
     oty_avg_wkly_wage_pct_chg
 )
-FROM @RAW.LOAD_STAGE/qcew
+FROM (
+    SELECT
+        $1::VARCHAR,
+        $2::VARCHAR,
+        TRY_TO_TIMESTAMP_NTZ($3),
+
+        $4::VARCHAR,
+        $5::VARCHAR,
+        $6::VARCHAR,
+        $7::VARCHAR,
+        $8::VARCHAR,
+
+        TRY_TO_NUMBER($9),
+        TRY_TO_NUMBER($10),
+
+        $11::VARCHAR,
+        $12::VARCHAR,
+        $13::VARCHAR,
+        $14::VARCHAR,
+        $15::VARCHAR,
+        $16::VARCHAR,
+
+        TRY_TO_NUMBER($17),
+        TRY_TO_NUMBER($18),
+        TRY_TO_NUMBER($19),
+        TRY_TO_NUMBER($20),
+
+        TRY_TO_NUMBER($21),
+        TRY_TO_NUMBER($22),
+        TRY_TO_NUMBER($23),
+        TRY_TO_NUMBER($24),
+
+        $25::VARCHAR,
+        TRY_TO_DOUBLE($26),
+        TRY_TO_DOUBLE($27),
+        TRY_TO_DOUBLE($28),
+        TRY_TO_DOUBLE($29),
+        TRY_TO_DOUBLE($30),
+        TRY_TO_DOUBLE($31),
+        TRY_TO_DOUBLE($32),
+        TRY_TO_DOUBLE($33),
+
+        $34::VARCHAR,
+        TRY_TO_NUMBER($35),
+        TRY_TO_DOUBLE($36),
+        TRY_TO_NUMBER($37),
+        TRY_TO_DOUBLE($38),
+        TRY_TO_NUMBER($39),
+        TRY_TO_DOUBLE($40),
+        TRY_TO_NUMBER($41),
+        TRY_TO_DOUBLE($42),
+        TRY_TO_NUMBER($43),
+        TRY_TO_DOUBLE($44),
+        TRY_TO_NUMBER($45),
+        TRY_TO_DOUBLE($46),
+        TRY_TO_NUMBER($47),
+        TRY_TO_DOUBLE($48),
+        TRY_TO_NUMBER($49),
+        TRY_TO_DOUBLE($50)
+    FROM @RAW.LOAD_STAGE/qcew
+)
 FILE_FORMAT = (FORMAT_NAME = RAW.CSV_HEADER_FORMAT)
-PATTERN = '.*qcew_county_industry_qtr_tx_v1[.]csv([.]gz)?'
-ON_ERROR = CONTINUE;
+PATTERN = '.*qcew_county_industry_qtr_us_v1.*[.]csv([.]gz)?'
+ON_ERROR = ABORT_STATEMENT;

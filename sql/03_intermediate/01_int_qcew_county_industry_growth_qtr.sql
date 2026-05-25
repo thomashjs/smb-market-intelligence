@@ -6,15 +6,15 @@ CREATE OR REPLACE VIEW INT.INT_QCEW_COUNTY_INDUSTRY_GROWTH_QTR AS
 WITH base AS (
     SELECT
         q.county_fips,
-        LEFT(q.county_fips, 2) AS state_fips,
+        q.state_fips,
+        q.state_abbr,
+        q.state_name,
         q.qcew_industry_code,
-        s.sector_code,
-        s.sector_name,
+        q.sector_code,
+        q.sector_name,
         q.year,
         q.quarter,
-
-        /* Continuous quarter index for time ordering. */
-        q.year * 4 + q.quarter AS period_id,
+        q.period_id,
 
         q.qtrly_estabs,
         q.avg_monthly_employment,
@@ -25,8 +25,7 @@ WITH base AS (
         q.oty_total_qtrly_wages_pct_chg
 
     FROM STG.STG_QCEW_COUNTY_INDUSTRY_QTR q
-    LEFT JOIN REF.NAICS_SECTOR s
-        ON q.qcew_industry_code = s.qcew_industry_code
+    WHERE q.sector_code IS NOT NULL
 ),
 
 windowed AS (
@@ -73,6 +72,8 @@ growth AS (
     SELECT
         county_fips,
         state_fips,
+        state_abbr,
+        state_name,
         qcew_industry_code,
         sector_code,
         sector_name,
@@ -119,6 +120,9 @@ growth AS (
 SELECT
     county_fips,
     state_fips,
+    state_abbr,
+    state_name,
+    
     qcew_industry_code,
     sector_code,
     sector_name,
